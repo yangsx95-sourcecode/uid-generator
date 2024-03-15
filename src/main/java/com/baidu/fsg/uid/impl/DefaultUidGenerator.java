@@ -62,9 +62,13 @@ public class DefaultUidGenerator implements UidGenerator, InitializingBean {
     private static final Logger LOGGER = LoggerFactory.getLogger(DefaultUidGenerator.class);
 
     /** Bits allocate */
+    // 时间位数量
     protected int timeBits = 28;
+    // 机器id位数量
     protected int workerBits = 22;
+    // 序列位数量
     protected int seqBits = 13;
+
 
     /** Customer epoch, unit as second. For example 2016-05-20 (ms: 1463673600000)*/
     protected String epochStr = "2016-05-20";
@@ -79,15 +83,21 @@ public class DefaultUidGenerator implements UidGenerator, InitializingBean {
     protected long lastSecond = -1L;
 
     /** Spring property */
+    // 工作id分配器
     protected WorkerIdAssigner workerIdAssigner;
 
+    // 1. Spring Bean 初始化之后，就会调用此方法
+    // 会先确定好各个位数、以及机器id的值
     @Override
     public void afterPropertiesSet() throws Exception {
         // initialize bits allocator
+        // 初始化位分配器
         bitsAllocator = new BitsAllocator(timeBits, workerBits, seqBits);
 
         // initialize worker id
+        // 初始化工作节点，默认使用  DisposableWorkerIdAssigner 这个实现，这个实现会从mysql表中获取工作节点
         workerId = workerIdAssigner.assignWorkerId();
+        // 如果机器id的长度超过了最大机器id长度，报错
         if (workerId > bitsAllocator.getMaxWorkerId()) {
             throw new RuntimeException("Worker id " + workerId + " exceeds the max " + bitsAllocator.getMaxWorkerId());
         }
@@ -95,6 +105,7 @@ public class DefaultUidGenerator implements UidGenerator, InitializingBean {
         LOGGER.info("Initialized bits(1, {}, {}, {}) for workerID:{}", timeBits, workerBits, seqBits, workerId);
     }
 
+    // 2. 生成获取一个UID
     @Override
     public long getUID() throws UidGenerateException {
         try {
@@ -133,8 +144,12 @@ public class DefaultUidGenerator implements UidGenerator, InitializingBean {
      * @throws UidGenerateException in the case: Clock moved backwards; Exceeds the max timestamp
      */
     protected synchronized long nextId() {
+        // 获取当前从 2016-05-20 开始的秒数
+        // 实际上就是拿当前秒数 - 2016年的秒数
         long currentSecond = getCurrentSecond();
 
+        // 当前秒数小于上次生成id的秒数，说明发生了时钟偏移，直接抛出异常
+        // 这里处理的不是很好，太粗暴了
         // Clock moved backwards, refuse to generate uid
         if (currentSecond < lastSecond) {
             long refusedSeconds = lastSecond - currentSecond;
@@ -142,6 +157,7 @@ public class DefaultUidGenerator implements UidGenerator, InitializingBean {
         }
 
         // At the same second, increase sequence
+        // 如果当前秒数相同，开始循环生成序列
         if (currentSecond == lastSecond) {
             sequence = (sequence + 1) & bitsAllocator.getMaxSequence();
             // Exceed the max sequence, we wait the next second to generate uid
@@ -157,6 +173,8 @@ public class DefaultUidGenerator implements UidGenerator, InitializingBean {
         lastSecond = currentSecond;
 
         // Allocate bits for UID
+        // 组装位，位的组装用位移运算符，再将他们加起来
+        // 这是以秒为一个循环的，而雪花算法则是按照毫秒来循环的，相比较毫秒来说，秒针对时间位的改变不是那么频繁，所以效率更高
         return bitsAllocator.allocate(currentSecond - epochSeconds, workerId, sequence);
     }
 

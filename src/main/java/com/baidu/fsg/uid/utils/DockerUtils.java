@@ -63,7 +63,7 @@ public abstract class DockerUtils {
 
     /**
      * Whether a docker
-     * 
+     *
      * @return
      */
     public static boolean isDocker() {

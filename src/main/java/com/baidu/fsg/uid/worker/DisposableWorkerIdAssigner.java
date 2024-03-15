@@ -39,6 +39,8 @@ public class DisposableWorkerIdAssigner implements WorkerIdAssigner {
     private WorkerNodeDAO workerNodeDAO;
 
     /**
+     * 基于数据库获取工作节点id，工作节点id是先根据当前运行环境创建一个 WorkerNodeEntity 数据库实体，在插入 work_node 表中。
+     * 得到的work_node的主键字段（id）就是新的机器id
      * Assign worker id base on database.<p>
      * If there is host name & port in the environment, we considered that the node runs in Docker container<br>
      * Otherwise, the node runs on an actual machine.
@@ -51,6 +53,7 @@ public class DisposableWorkerIdAssigner implements WorkerIdAssigner {
         WorkerNodeEntity workerNodeEntity = buildWorkerNode();
 
         // add worker node for new (ignore the same IP + PORT)
+        // 入库机器节点，并返回主键作为机器id
         workerNodeDAO.addWorkerNode(workerNodeEntity);
         LOGGER.info("Add worker node:" + workerNodeEntity);
 
@@ -62,6 +65,9 @@ public class DisposableWorkerIdAssigner implements WorkerIdAssigner {
      */
     private WorkerNodeEntity buildWorkerNode() {
         WorkerNodeEntity workerNodeEntity = new WorkerNodeEntity();
+        // 判断是否是Docker环境，实际上是根据 JPAAS_HOST 环境变量决定的
+        // 如果是容器下运行，获取 JPASS_HOST JPASS_PORT 环境变量
+        // 否则获取真实本地址，端口设置一个随机值
         if (DockerUtils.isDocker()) {
             workerNodeEntity.setType(WorkerNodeType.CONTAINER.value());
             workerNodeEntity.setHostName(DockerUtils.getDockerHost());
