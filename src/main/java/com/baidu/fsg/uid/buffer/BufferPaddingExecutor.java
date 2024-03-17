@@ -140,12 +140,16 @@ public class BufferPaddingExecutor {
     public void paddingBuffer() {
         LOGGER.info("Ready to padding buffer lastSecond:{}. {}", lastSecond.get(), ringBuffer);
 
+        // 判断当前线程池是否运行中
+        // todo  既然一个线程池中多个线程只能有一个线程生产uid，那么为什么还要用线程池呢
+        // todo  直接用单个线程的线程池不就ok了？超过的线程直接拒绝掉不就ok了？？？？ why
         // is still running
         if (!running.compareAndSet(false, true)) {
             LOGGER.info("Padding buffer is still running. {}", ringBuffer);
             return;
         }
 
+        // 开始生产下一秒的所有的uid，并放入ringBuffer
         // fill the rest slots until to catch the cursor
         boolean isFullRingBuffer = false;
         while (!isFullRingBuffer) {
@@ -158,6 +162,7 @@ public class BufferPaddingExecutor {
             }
         }
 
+        // 生成完毕之后，设置运行状态为false，好为下次生产准备
         // not running now
         running.compareAndSet(true, false);
         LOGGER.info("End to padding buffer lastSecond:{}. {}", lastSecond.get(), ringBuffer);

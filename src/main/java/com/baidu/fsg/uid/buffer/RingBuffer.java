@@ -36,27 +36,37 @@ import com.baidu.fsg.uid.utils.PaddedAtomicLong;
  * 
  * @author yutianbao
  */
+
+// 环形缓冲区的实现
 public class RingBuffer {
     private static final Logger LOGGER = LoggerFactory.getLogger(RingBuffer.class);
 
     /** Constants */
     private static final int START_POINT = -1;
+
+    // 对应下面的flags的状态，是可填充的状态
     private static final long CAN_PUT_FLAG = 0L;
+    // 对应下面flags的状态，是可获取的状态
     private static final long CAN_TAKE_FLAG = 1L;
     public static final int DEFAULT_PADDING_PERCENT = 50;
 
     /** The size of RingBuffer's slots, each slot hold a UID */
+    // 环形缓冲区的长度
     private final int bufferSize;
     private final long indexMask;
+    // 环形缓冲区内部实际是一个数组，用于存放id
     private final long[] slots;
+    // 这是标记位，slot的状态的
     private final PaddedAtomicLong[] flags;
 
     /** Tail: last position sequence to produce */
+    // tail 指针，他走过的地方代表生产过的地方
     private final AtomicLong tail = new PaddedAtomicLong(START_POINT);
 
     /** Cursor: current position sequence to consume */
+    // cursor指针， 他走过的地方代表消费的地方
     private final AtomicLong cursor = new PaddedAtomicLong(START_POINT);
-
+    // 填充阈值，不过不是百分比，而是真实的索引位置
     /** Threshold for trigger padding buffer*/
     private final int paddingThreshold; 
     
@@ -84,6 +94,7 @@ public class RingBuffer {
      *        Sample: paddingFactor=20, bufferSize=1000 -> threshold=1000 * 20 /100,  
      *        padding buffer will be triggered when tail-cursor<threshold
      */
+    // paddingFactor 填充阈值，如果剩余的可用id数量的百分比，小于这个值的话，就开始重新填充，这是个百分比
     public RingBuffer(int bufferSize, int paddingFactor) {
         // check buffer size is positive & a power of 2; padding factor in (0, 100)
         Assert.isTrue(bufferSize > 0L, "RingBuffer size must be positive");
@@ -94,7 +105,8 @@ public class RingBuffer {
         this.indexMask = bufferSize - 1;
         this.slots = new long[bufferSize];
         this.flags = initFlags(bufferSize);
-        
+
+        // 计算百分比对应的真正的阈值位置
         this.paddingThreshold = bufferSize * paddingFactor / 100;
     }
 
@@ -108,24 +120,31 @@ public class RingBuffer {
      * @param uid
      * @return false means that the buffer is full, apply {@link RejectedPutBufferHandler}
      */
+    // 往环形数组中填充一个uid值
     public synchronized boolean put(long uid) {
         long currentTail = tail.get();
         long currentCursor = cursor.get();
 
         // tail catches the cursor, means that you can't put any cause of RingBuffer is full
+        // 他先计算当前两个指针的相隔距离
         long distance = currentTail - (currentCursor == START_POINT ? 0 : currentCursor);
+        // 如果距离为缓冲区的长度，生产的数量已经到顶了，不能再生产了，走拒绝put策略
         if (distance == bufferSize - 1) {
             rejectedPutHandler.rejectPutBuffer(this, uid);
             return false;
         }
 
+        // 检查当前尾部+1的位置是不是能进行放入数据
+        // 也就是从flags中获取状态
         // 1. pre-check whether the flag is CAN_PUT_FLAG
         int nextTailIndex = calSlotIndex(currentTail + 1);
+        // 如果不可以，走拒绝put策略
         if (flags[nextTailIndex].get() != CAN_PUT_FLAG) {
             rejectedPutHandler.rejectPutBuffer(this, uid);
             return false;
         }
 
+        // 校验通过，让如uid到slot ，设置flags，并移动尾指针
         // 2. put UID in the next slot
         // 3. update next slot' flag to CAN_TAKE_FLAG
         // 4. publish tail with sequence increase by one
@@ -148,33 +167,40 @@ public class RingBuffer {
      * @return UID
      * @throws IllegalStateException if the cursor moved back
      */
+    // 从环形缓冲区中获取一个元素
     public long take() {
         // spin get next available cursor
         long currentCursor = cursor.get();
         long nextCursor = cursor.updateAndGet(old -> old == tail.get() ? old : old + 1);
 
+        // 如果生产消费指针大于等于生产指针，说明没得消费了
         // check for safety consideration, it never occurs
         Assert.isTrue(nextCursor >= currentCursor, "Curosr can't move back");
 
+        // 如果到达扩容的阈值，执行对其操作
         // trigger padding in an async-mode if reach the threshold
         long currentTail = tail.get();
         if (currentTail - nextCursor < paddingThreshold) {
             LOGGER.info("Reach the padding threshold:{}. tail:{}, cursor:{}, rest:{}", paddingThreshold, currentTail,
                     nextCursor, currentTail - nextCursor);
+            // 对其操作是使用一个cpu核心数*2的固定数量的线程池
             bufferPaddingExecutor.asyncPadding();
         }
 
+        // 如果两个指针相遇，说明数组已经满了
         // cursor catch the tail, means that there is no more available UID to take
         if (nextCursor == currentCursor) {
             rejectedTakeHandler.rejectTakeBuffer(this);
         }
 
+        // 检查是否可以当前位置获取uid
         // 1. check next slot flag is CAN_TAKE_FLAG
         int nextCursorIndex = calSlotIndex(nextCursor);
         Assert.isTrue(flags[nextCursorIndex].get() == CAN_TAKE_FLAG, "Curosr not in can take status");
 
         // 2. get UID from next slot
         // 3. set next slot flag as CAN_PUT_FLAG.
+        // 获取uid，并设置slot位为可填充状态
         long uid = slots[nextCursorIndex];
         flags[nextCursorIndex].set(CAN_PUT_FLAG);
 

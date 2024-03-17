@@ -48,6 +48,8 @@ import com.baidu.fsg.uid.exception.UidGenerateException;
  * 
  * @author yutianbao
  */
+// 环形数组利用了cpu缓存，性能更高
+// 环形数组实现继承了默认实现
 public class CachedUidGenerator extends DefaultUidGenerator implements DisposableBean {
     private static final Logger LOGGER = LoggerFactory.getLogger(CachedUidGenerator.class);
     private static final int DEFAULT_BOOST_POWER = 3;
@@ -68,7 +70,8 @@ public class CachedUidGenerator extends DefaultUidGenerator implements Disposabl
     public void afterPropertiesSet() throws Exception {
         // initialize workerId & bitsAllocator
         super.afterPropertiesSet();
-        
+
+        // 相比较默认实现，还初始化了一个环形数组缓存
         // initialize RingBuffer & RingBufferPaddingExecutor
         this.initRingBuffer();
         LOGGER.info("Initialized RingBuffer successfully.");
@@ -100,6 +103,7 @@ public class CachedUidGenerator extends DefaultUidGenerator implements Disposabl
      * @param currentSecond
      * @return UID list, size of {@link BitsAllocator#getMaxSequence()} + 1
      */
+    // 生成id
     protected List<Long> nextIdsForOneSecond(long currentSecond) {
         // Initialize result list size of (max sequence + 1)
         int listSize = (int) bitsAllocator.getMaxSequence() + 1;
@@ -119,7 +123,15 @@ public class CachedUidGenerator extends DefaultUidGenerator implements Disposabl
      */
     private void initRingBuffer() {
         // initialize RingBuffer
+
+        // 1. 先计算数组长度
+        //    注意，环形数组每秒生成一次，到下一秒的时候，就会重置位置重新使用
+        //    环形缓冲区的长度为  （MaxSequence() + 1）<< 3 ，
+        //          TODO +1 是为了什么？？？
+        //          << 3 这个数字 bootPower 是可以配置的，左移3是为了不创建过大的环形缓冲区， TODO 如果超过了这个位移过后的范围会扩容吗？
         int bufferSize = ((int) bitsAllocator.getMaxSequence() + 1) << boostPower;
+        // 2. 初始化环形缓冲区
+        //     为什么使用环形缓冲区？https://zhuanlan.zhihu.com/p/534098236
         this.ringBuffer = new RingBuffer(bufferSize, paddingFactor);
         LOGGER.info("Initialized ring buffer size:{}, paddingFactor:{}", bufferSize, paddingFactor);
 
